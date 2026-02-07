@@ -183,13 +183,33 @@ def process_video(job_id: str, url: str):
         
         zip_path = OUTPUT_DIR / f"{job_id}.zip"
         
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
-            for i, frame in enumerate(unique):
-                img_path = job_dir / f"slide_{i+1:03d}.jpg"
-                cv2.imwrite(str(img_path), frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
-                zf.write(img_path, f"slide_{i+1:03d}.jpg")
+        # Save all images FIRST
+        image_paths = []
+        for i, frame in enumerate(unique):
+            img_path = job_dir / f"slide_{i+1:03d}.jpg"
+            cv2.imwrite(str(img_path), frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            image_paths.append(img_path)
+            print(f"[{job_id}]   Saved slide_{i+1:03d}.jpg")
         
-        print(f"[{job_id}] ✓ ZIP created: {zip_path.stat().st_size} bytes")
+        print(f"[{job_id}] ✓ Saved {len(image_paths)} images")
+        
+        # Now create ZIP with all saved images
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for img_path in image_paths:
+                if img_path.exists():
+                    zf.write(img_path, img_path.name)
+                else:
+                    print(f"[{job_id}] ⚠ Missing: {img_path.name}")
+        
+        # Verify ZIP was created and has content
+        if not zip_path.exists():
+            raise Exception("ZIP file was not created")
+        
+        zip_size = zip_path.stat().st_size
+        if zip_size < 1000:
+            raise Exception(f"ZIP file too small: {zip_size} bytes")
+        
+        print(f"[{job_id}] ✓ ZIP created: {zip_size} bytes")
         
         # Complete
         jobs[job_id].update({
@@ -202,12 +222,17 @@ def process_video(job_id: str, url: str):
         
         print(f"[{job_id}] ✅ DONE")
         
-        # Cleanup
+        # Cleanup temp files AFTER everything is complete
         import shutil
+        import time
+        time.sleep(1)  # Wait to ensure ZIP is fully written
+        
         try:
-            shutil.rmtree(job_dir)
-        except:
-            pass
+            if job_dir.exists():
+                shutil.rmtree(job_dir)
+                print(f"[{job_id}] ✓ Cleaned up")
+        except Exception as e:
+            print(f"[{job_id}] ⚠ Cleanup: {e}")
         
     except Exception as e:
         print(f"[{job_id}] ❌ {e}")
