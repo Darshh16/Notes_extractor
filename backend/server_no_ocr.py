@@ -113,10 +113,22 @@ async def download_pdf(job_id: str):
     if not pdf_path or not os.path.exists(pdf_path):
         raise HTTPException(status_code=404, detail="PDF file not found")
     
+    # Verify PDF is valid before sending
+    try:
+        with open(pdf_path, 'rb') as f:
+            header = f.read(5)
+            if header != b'%PDF-':
+                raise HTTPException(status_code=500, detail="Invalid PDF file")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error reading PDF: {str(e)}")
+    
     return FileResponse(
         pdf_path,
         media_type="application/pdf",
-        filename=f"notes_{job_id}.pdf"
+        headers={
+            "Content-Disposition": f"attachment; filename=notes_{job_id}.pdf",
+            "Cache-Control": "no-cache"
+        }
     )
 
 def process_video(job_id: str, url: str, quality: str):
@@ -224,9 +236,25 @@ def process_video(job_id: str, url: str, quality: str):
                 story.append(PageBreak())
         
         doc.build(story)
-        print(f"[{job_id}] ✓ PDF created: {pdf_path}")
         
-        # Complete
+        # Verify PDF was created successfully
+        if not pdf_path.exists():
+            raise Exception("PDF file was not created")
+        
+        # Verify PDF is valid
+        with open(pdf_path, 'rb') as f:
+            header = f.read(5)
+            if header != b'%PDF-':
+                raise Exception(f"Invalid PDF header: {header}")
+        
+        file_size = pdf_path.stat().st_size
+        print(f"[{job_id}] ✓ PDF created: {pdf_path} ({file_size} bytes)")
+        
+        # Wait a moment to ensure file is fully written
+        import time
+        time.sleep(0.5)
+        
+        # Complete - UPDATE STATUS BEFORE CLEANUP
         jobs[job_id].update({
             "status": "completed",
             "progress": 100,
@@ -237,10 +265,14 @@ def process_video(job_id: str, url: str, quality: str):
         
         print(f"[{job_id}] ✅ COMPLETE!")
         
-        # Cleanup
+        # Cleanup temp files AFTER marking complete
         import shutil
-        if job_dir.exists():
-            shutil.rmtree(job_dir)
+        try:
+            if job_dir.exists():
+                shutil.rmtree(job_dir)
+                print(f"[{job_id}] ✓ Cleaned up temp files")
+        except Exception as cleanup_error:
+            print(f"[{job_id}] ⚠ Cleanup warning: {cleanup_error}")
         
     except Exception as e:
         print(f"[{job_id}] ❌ ERROR: {e}")
